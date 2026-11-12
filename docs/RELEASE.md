@@ -45,7 +45,9 @@ Users of an APK signed with a different key have to uninstall once (Settings > S
 4. Create `update.json` for exactly this APK (section 3).
 5. On GitHub: **Releases > Draft a new release**
    - Tag: `v` + versionName, e.g. `v1.2` (the app compares this tag with its own version)
-   - Title and notes: what is new (the first lines appear in the app)
+   - Title: `IPVIO Stream ` + versionName, e.g. `IPVIO Stream 1.2`
+   - Notes: paste `docs/release-notes/v<versionName>.md` (written from `CHANGELOG.md` with `docs/release-notes/TEMPLATE.md`).
+     If the app falls back to the GitHub API, it shows the first four non-heading lines of this text, so the highlights come first
    - Attach **both** `IPVIO-Stream.apk` and `update.json`
    - **Publish release** (not "pre-release", the app ignores those)
 6. Check: open `https://github.com/Emrodev/IPVIO-Stream/releases/latest/download/update.json` in a browser. It must show your JSON.

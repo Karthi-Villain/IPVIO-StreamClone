@@ -120,6 +120,7 @@ Maintained in `docs/` (English), kept in line with the code:
 - `adr/NNNN-title.md` – one decision record per architectural decision (not for every small change)
 - `FEATURES.md`, `IPTV.md`, `PLAYER.md`, `SECURITY.md`, `TESTING.md`, `TECH-DEBT.md`, `REFACTORING-PROGRESS.md`
 - `RELEASE.md` (exists); `CHANGELOG.md` at repo root, updated for every task
+- `release-notes/vX.Y.md` – user-facing notes for every GitHub release (section 16)
 
 Documentation must describe the actual code. Mark unknowns as unknown.
 
@@ -136,3 +137,19 @@ If you do not know how something works: read the code first. Do not guess. Ask b
 - Open tasks: T-004 (quality baseline, values pending), U-2 to U-5. T-006 (backup `NAMES`) is done.
 - U-1 (Media3 code out of `PlayerLogic.kt`) is done (PR #30). Next step: see `docs/tasks/WORK_STATE.md`.
 - Details: `docs/REFACTORING-PROGRESS.md` and `docs/tasks/WORK_STATE.md`.
+
+## 16. Releases and release notes
+
+Whenever a release is prepared (version bump in `app/build.gradle.kts`, a `release/*` branch, or the maintainer says "release"), the assistant always writes the release notes as part of the same change. A release without notes is not ready.
+
+1. **CHANGELOG.md:** rename `## Unreleased` to `## X.Y` (the new `versionName`) and start a new empty `## Unreleased` above it. Do not rewrite older sections.
+2. **Release notes:** create `docs/release-notes/vX.Y.md` from `docs/release-notes/TEMPLATE.md`. Source is the CHANGELOG section of this version (and of any version users may skip, e.g. a broken release). Rules:
+   - Written for users, not developers: no task IDs, class names, file paths or build internals. Internal-only changes go into one line "Internal changes" or are left out.
+   - English (section 4). German UI labels are quoted as they appear in the app.
+   - The first four bullet lines under the first heading are the highlights: the app's GitHub API fallback shows the first four non-heading lines of the release text (`AppUpdate.kt`). Keep each short.
+   - State known limits honestly (e.g. "not measured", "needs your own API key").
+   - Say whether the update keeps user data and whether it must be installed by hand.
+3. **update.json `notes`:** propose one line, at most 300 characters (`Round17Logic.kt` cuts the rest).
+4. **Report:** give the maintainer the release title (`IPVIO Stream X.Y`), the tag (`vX.Y`) and point to the notes file to paste into GitHub (`docs/RELEASE.md`, section 2).
+
+The assistant does not publish releases; the maintainer does.

@@ -1,6 +1,8 @@
-Last update: 2026-11-12 (release 1.4 prepared). Read `CLAUDE.md` first, then this file.
+Last update: 2026-11-12 (1.4.1 released, T-027 in PR #66). Read `CLAUDE.md` first, then this file.
 
 ## Current task
+
+T-027 (release notes for every release, branch `docs/T-027-release-notes`): rule in `CLAUDE.md` section 16, template and first notes in `docs/release-notes/`, see `docs/tasks/T-027-release-notes.md`. PR #66, waiting for review. Documentation only, nothing built or run. Next step for the maintainer: paste `docs/release-notes/v1.4.1.md` into the GitHub release `v1.4.1`.
 
 Release 1.4 (`versionCode` 5): `main` plus the speed series (T-019 to T-023), R8 over the whole app (T-024) and the update card fix (T-025). Reported by the maintainer on 12 Nov 2026: built and tested on the device, works. The individual checks and any measurements were not recorded. The statuses "not built, not tested" further down for these tasks are older than this report. The maintainer builds the signed APK, creates `update.json` and publishes the GitHub release `v1.4` (steps in `docs/RELEASE.md`). The assistant did not build or publish anything. Rollback for R8 if users report a crash at start: `enable = false` in `app/build.gradle.kts` and a new release.
 
@@ -53,5 +55,7 @@ Also done in this round (12 Nov 2026, afternoon, pushed together, device test by
 - T-004 (quality baseline values) needs ktlint, detekt and Lint runs on the maintainer's machine.
 
 ## Next step
+
+T-027: paste `docs/release-notes/v1.4.1.md` into the GitHub release `v1.4.1`; PR #66 waits for the maintainer's review.
 
 Device tests of T-015 (steps in its task file; needs a test release with `update.json`) and of T-014 (first-start update card). Mode switch fix, demo mode, favorites reorder, settings reset: confirmed working by the maintainer on 12 Nov 2026. Still open: device tests of #45 backup, #47 Stalker, #49, #50, #52. Then decide T-010 and T-012 against the on-demand loading, and PR #40 / PR #9.

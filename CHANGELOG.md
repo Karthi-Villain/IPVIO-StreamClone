@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Docs: every release now gets user-facing release notes in `docs/release-notes/vX.Y.md` (template, rule in `CLAUDE.md` section 16, step in `docs/RELEASE.md`); first notes written for 1.4.1 (T-027)
 
 ## 1.4.1
 - Fix: 1.4 did not open after the update on user devices. R8 over the whole app (T-024) is switched off again (`enable = false` in app/build.gradle.kts, the rollback from ADR 0005); versionCode 6. Cause not confirmed by a crash log (unverified). Install 1.4.1 over 1.4; data is kept (same signature)
