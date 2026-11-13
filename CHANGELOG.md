@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- Live TV: channels with a live address stay in Live TV even when their category is called "Movies", "Kino", "VOD" and so on (e.g. "EU | DE | Movies and Series"); before they were sorted into Movies and hidden with "Live TV only" (T-026)
+- Playlist loading: a download without a known size whose end looks cut off is no longer stored as the playlist; Xtream lists from get.php are also checked against the provider's live categories and loaded through the API when most are missing (T-026)
+- Settings > Playlists: a failed refresh is shown instead of staying silent, and the new button "Playlist komplett neu laden" deletes everything stored for the active playlist and downloads it again (T-026)
+- Diagnostics: logcat tag `IPVIO-PL` with counts per step of playlist loading (no addresses or passwords) (T-026)
 
 ## 1.4.1
 - Fix: 1.4 did not open after the update on user devices. R8 over the whole app (T-024) is switched off again (`enable = false` in app/build.gradle.kts, the rollback from ADR 0005); versionCode 6. Cause not confirmed by a crash log (unverified). Install 1.4.1 over 1.4; data is kept (same signature)

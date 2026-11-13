@@ -106,6 +106,12 @@ object PlaylistStore {
 
     var loading by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
+    /**
+     * Updating failed while the old list is still shown (the old list stays). Before, this stayed silent, so it looked as if
+     * the playlist simply did not update. Shown in the playlist settings; cleared by the next successful load.
+     */
+    var refreshError by mutableStateOf<String?>(null)
+        private set
     /** true while downloading or parsing (not during fast reading of the cache) – then show the loading screen. */
     var heavy by mutableStateOf(false)
         private set
@@ -173,6 +179,7 @@ object PlaylistStore {
 
     const val MSG_CANCEL = "Laden abgebrochen. Deine Angaben bleiben gespeichert."
     const val MSG_TOO_BIG = "Die gewählten Inhalte sind zu groß für den Speicher dieses Geräts. Bitte weniger Sprachen wählen."
+    const val MSG_INCOMPLETE = "Die Playlist kam nur unvollständig an. Bitte später erneut versuchen."
 
     /** Question for very large playlists: which languages should be loaded? */
     class LangAsk(val counts: Map<String, Int>, val bytes: Map<String, Long>, val preselect: Set<String>, val budget: Long) {
@@ -545,8 +552,15 @@ object PlaylistStore {
                 if (attempt < 2) { phase = "Verbindung unterbrochen – neuer Versuch …"; delay(3000) }
             }
         }
+        if (last is IncompleteDownload) throw PlaylistError(MSG_INCOMPLETE)
         throw last ?: IOException("Download")
     }
+
+    /** The list arrived only in part. Never parsed, never stored as cache; retried like a lost connection. */
+    private class IncompleteDownload : IOException("Download unvollständig")
+
+    /** true if the size of the last list download was unknown (then [download] checks it for completeness). */
+    @Volatile private var lastUnsized = false
 
     private fun charsetOf(name: String?): Charset = try { Charset.forName(name ?: "UTF-8") } catch (e: Exception) { Charsets.UTF_8 }
 
@@ -570,9 +584,17 @@ object PlaylistStore {
             downloadList(c, u)
         } catch (e: PlaylistError) {
             return apiInstead(c, u, acct, e)
+        } catch (e: IncompleteDownload) {
+            // get.php was cut off: the API delivers JSON, where a cut always fails instead of looking like a short list
+            return apiInstead(c, u, acct, PlaylistError(MSG_INCOMPLETE))
         }
         val head = runCatching { got.first.inputStream().use { s -> val b = ByteArray(512); val k = s.read(b); if (k > 0) String(b, 0, k, got.second) else "" } }.getOrDefault("")
-        if (XtreamLogic.looksLikeM3u(head)) return got
+        if (XtreamLogic.looksLikeM3u(head)) {
+            if (!lastUnsized || !missesCategories(acct, got.first, got.second)) return got
+            // Most of the provider's live categories are missing: the list arrived only in part
+            got.first.delete(); infoFile(c, u).delete()
+            return apiInstead(c, u, acct, PlaylistError(MSG_INCOMPLETE))
+        }
         // 200, but no list (error page, empty response): try the API
         got.first.delete(); infoFile(c, u).delete()
         return apiInstead(c, u, acct, PlaylistError("Der Server hat keine gültige Playlist geliefert."))
@@ -626,6 +648,7 @@ object PlaylistStore {
         val counter = CountingOut(FileOutputStream(part)) { k -> synchronized(lock) { listN = k; show() } }
         try {
             val n = OutputStreamWriter(BufferedOutputStream(counter, 1 shl 16), Charsets.UTF_8).use { w -> api.write(acct, w) }
+            PlaylistDiag.log("download(api)", "entries=$n bytes=${part.length()}")
             if (n == 0) throw PlaylistError("Keine Sender in der Playlist gefunden.")
         } catch (e: Throwable) {
             part.delete()
@@ -669,9 +692,11 @@ object PlaylistStore {
         val part = partFile(c, u)
         val pi = LoadLogic.PartInfo.decode(runCatching { info.readText() }.getOrNull())?.takeIf { it.urlHash == key(u) }
         if (pi != null && raw.exists() && raw.length() > 0 && System.currentTimeMillis() - raw.lastModified() < RAW_MAX_AGE) {
+            lastUnsized = false   // was checked when it was downloaded
             return raw to charsetOf(pi.charset)
         }
         raw.delete()
+        lastUnsized = false
         var offset = if (pi != null && part.exists()) part.length() else 0L
         // After a power loss the last written bytes may be missing or corrupt: go back a bit
         if (offset > 0) { offset = maxOf(0L, offset - 65_536); RandomAccessFile(part, "rw").use { it.setLength(offset) } }
@@ -725,15 +750,53 @@ object PlaylistStore {
                     out.flush()
                     bytesRead = n
                 }
-                if (total > 0 && part.length() < total) throw IOException("Download unvollständig")
+                if (total > 0 && part.length() < total) throw IncompleteDownload()
+                lastUnsized = total <= 0
             }
         } finally {
             call = null
         }
         if (part.length() == 0L) throw PlaylistError("Der Server hat keine Daten geliefert.")
+        // Without a size the end of a cut-off download looks normal: check the end of the file
+        val cut = lastUnsized && LoadLogic.tailLooksCut(tailOf(part))
+        PlaylistDiag.log("download", "bytes=${part.length()} sized=${!lastUnsized} tailCut=$cut")
+        if (cut) {
+            part.delete(); info.delete()   // start from the beginning on the next attempt
+            throw IncompleteDownload()
+        }
         raw.delete()
         if (!part.renameTo(raw)) throw IOException("Datei konnte nicht umbenannt werden")
         return raw to charsetOf(LoadLogic.PartInfo.decode(runCatching { info.readText() }.getOrNull())?.charset)
+    }
+
+    /** The last bytes of a file as text (only the line structure matters, so the charset does not). */
+    private fun tailOf(f: File, max: Int = 4096): String = RandomAccessFile(f, "r").use { r ->
+        val n = minOf(r.length(), max.toLong()).toInt()
+        val b = ByteArray(n)
+        r.seek(r.length() - n)
+        r.readFully(b)
+        String(b, Charsets.ISO_8859_1)
+    }
+
+    /**
+     * Xtream list from get.php without a known size: compare its categories with the provider's live categories.
+     * true = most of them are missing (list cut off). If the provider does not answer, the list is accepted.
+     */
+    private fun missesCategories(acct: XtreamLogic.Acct, f: File, cs: Charset): Boolean {
+        val api = runCatching { XtreamApi(client, UA).liveCategoryNames(acct) }.getOrNull().orEmpty()
+        if (api.size < 5) return false
+        phase = "Playlist wird geprüft …"
+        val found = HashSet<String>()
+        var k = 0
+        f.bufferedReader(cs).useLines { lines ->
+            for (l in lines) {
+                if (l.startsWith("#EXTINF")) LoadLogic.groupTitle(l)?.let { found.add(LoadLogic.normGroup(it)) }
+                if (++k % 20_000 == 0 && cancelled()) throw CancellationException("abgebrochen")
+            }
+        }
+        val missing = LoadLogic.missingCategories(api, found)
+        PlaylistDiag.log("categories", "provider=${api.size} inList=${found.size} cut=$missing")
+        return missing
     }
 
     // ------------------------------------------------------------------ Reading
@@ -1062,6 +1125,7 @@ object PlaylistStore {
             if (!legacyTooBig && (head.hidden == null || head.hidden == hidden)) {
                 val cached = readCache(c, u, hidden)
                 if (cached != null && cached.counts.isNotEmpty()) {
+                    PlaylistDiag.log("cache", PlaylistDiag.summary(cached.items) + " hidden=${hidden.sorted()}")
                     show(c, u, cached.items, cached.epg, cached.order, cached.counts, cached.bytes, hidden)
                     return Local.OK
                 }
@@ -1075,6 +1139,7 @@ object PlaylistStore {
             val b = build(c, u, gz, true, Charsets.UTF_8, ask, null)
             val p = b.parsed
             if (p.counts.isEmpty()) return Local.NONE
+            PlaylistDiag.log("stored list", PlaylistDiag.summary(p.items) + " hidden=${b.hidden.sorted()}")
             val epg = head?.epg?.takeIf { it.isNotEmpty() } ?: epgFor(u, p.epgUrls)
             val order = head?.order ?: emptyMap()
             phase = "Playlist wird gespeichert …"; downloadDone = true
@@ -1151,6 +1216,7 @@ object PlaylistStore {
                 val gzTmp = tmp(gzFile(c, u))
                 val b = build(c, u, src, false, cs, ask, gzTmp, forceAsk)
                 val parsed = b.parsed
+                PlaylistDiag.log("parsed", PlaylistDiag.summary(parsed.items) + " languages=${parsed.counts.size} hidden=${b.hidden.sorted()}")
                 if (parsed.counts.isEmpty()) throw PlaylistError("Keine Sender in der Playlist gefunden.")
                 downloadDone = true
                 val urls = epgFor(u, parsed.epgUrls)
@@ -1167,6 +1233,7 @@ object PlaylistStore {
                 loadExtras(c, network = true)
                 if (save) finishSave(c, u)
                 askNext = false
+                refreshError = null
                 true
             } catch (e: CancellationException) {
                 if (save) failPending(c, MSG_CANCEL)
@@ -1175,13 +1242,15 @@ object PlaylistStore {
                 if (cancelled()) { if (save) failPending(c, MSG_CANCEL); throw CancellationException("abgebrochen") }
                 val msg = if (e is ParseStop) MSG_TOO_BIG else PlaylistLogic.friendlyError(e)
                 if (e is ParseStop) askNext = true
-                if (rawChannels.isEmpty() || save) error = msg
+                PlaylistDiag.log("load failed", e.javaClass.simpleName)
+                if (rawChannels.isEmpty() || save) error = msg else refreshError = msg
                 if (save) failPending(c, msg)
                 usedCache
             } catch (e: OutOfMemoryError) {
                 askNext = true
                 if (save) failPending(c, MSG_TOO_BIG)
-                if (rawChannels.isEmpty() || save) error = MSG_TOO_BIG
+                PlaylistDiag.log("load failed", "OutOfMemoryError")
+                if (rawChannels.isEmpty() || save) error = MSG_TOO_BIG else refreshError = MSG_TOO_BIG
                 usedCache
             }
         }
@@ -1211,6 +1280,7 @@ object PlaylistStore {
             loading = true; error = null
             phase = "Sprachauswahl wird angewendet …"; bytesRead = 0L; totalBytes = -1L; downloadDone = false
             val prev = shownHidden
+            PlaylistDiag.log("languages", "hidden=${LangFilter.hidden.sorted()}")
             // Little memory free: release the old list first, otherwise old and new list would be in memory at once
             if (Mem.heapTight(0.45)) setItems(emptyList())
             val r = withContext(Dispatchers.IO) { fromLocal(c, u, allowGz = true, ask = false) }
@@ -1271,6 +1341,26 @@ object PlaylistStore {
             job = null
             loadLock.unlock()
         }
+    }
+
+    /**
+     * "Reload playlist from scratch" (playlist settings): forgets everything stored for the active playlist – cache,
+     * stored whole list, downloaded and partial files, and the remembered "load via API" – and downloads it again.
+     * The old list is released first, so old and new list are never in memory at once.
+     * Kept: the playlist itself, its name, backup servers, content mode and language selection. false = a load is running.
+     */
+    suspend fun reloadFromScratch(c: Context): Boolean {
+        ensure(c)
+        val u = savedUrl(c) ?: return false
+        if (loading || loadLock.isLocked) return false
+        val files = listOf(cacheFile(c, u), gzFile(c, u), rawFile(c, u), partFile(c, u), infoFile(c, u))
+        withContext(Dispatchers.IO) { (files + files.map { tmp(it) }).forEach { runCatching { it.delete() } } }
+        prefs(c).edit().remove(apiKey(u)).apply()
+        PlaylistDiag.log("reload from scratch", "stored files deleted")
+        refreshError = null
+        primaryItems = emptyList()
+        setItems(emptyList())
+        return load(c, u, save = false)
     }
 
     /** Delete a fully downloaded raw file that is unusable in the background (space); a partial file stays for resuming. */

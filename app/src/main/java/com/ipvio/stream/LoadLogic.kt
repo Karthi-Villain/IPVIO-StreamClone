@@ -178,6 +178,46 @@ object LoadLogic {
         val pass = q["password"] ?: return null
         return Triple(m.groupValues[1], user, pass)
     }
+
+    // ------------------------------------------------------------------ completeness of a download
+
+    /**
+     * End of a downloaded list whose size the server did not send: does it look cut off?
+     * Without a size, a connection the provider closes early (e.g. a time limit on the server) looks like a normal end.
+     * Cut off = the last line is a tag (an entry without its address, e.g. "#EXTINF:-1 group-title=\"AS | …\""), or the file
+     * does not end with a line break and the last line is not an address either (cut in the middle of a line).
+     * A cut in the middle of an address cannot be told from a complete list; [missingCategories] covers Xtream for that.
+     */
+    fun tailLooksCut(tail: String): Boolean {
+        val last = tail.split('\n').map { it.trim('\r', ' ', '\t') }.lastOrNull { it.isNotEmpty() } ?: return false
+        if (last.startsWith("#")) return !last.startsWith("#EXTM3U")
+        val endsWithBreak = tail.endsWith("\n") || tail.endsWith("\r")
+        return !endsWithBreak && !last.contains("://")
+    }
+
+    /** Category of an #EXTINF line (value of group-title), null if there is none. */
+    fun groupTitle(line: String): String? {
+        val at = line.indexOf("group-title=\"")
+        if (at < 0) return null
+        val from = at + 13
+        val end = line.indexOf('"', from)
+        return if (end < 0) null else line.substring(from, end)
+    }
+
+    /** Category names compared without case and surrounding spaces (the API path writes " as '). */
+    fun normGroup(name: String): String = name.replace('"', '\'').trim().lowercase()
+
+    /**
+     * Xtream: are most of the provider's live categories missing from the downloaded list? Then the list arrived only in part.
+     * Providers also list empty categories, so only less than half counts as missing; with fewer than 5 categories nothing is decided.
+     * [found] = categories of the list, already passed through [normGroup].
+     */
+    fun missingCategories(api: Collection<String>, found: Set<String>): Boolean {
+        val names = api.map { normGroup(it) }.filter { it.isNotEmpty() }.toSet()
+        if (names.size < 5) return false
+        val hit = names.count { it in found }
+        return hit * 2 < names.size
+    }
 }
 
 /**

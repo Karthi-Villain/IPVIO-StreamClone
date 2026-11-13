@@ -1255,6 +1255,12 @@ private fun PlaylistPage(ctx: Context, onAdd: () -> Unit, reload: () -> Unit) {
         PillButton("+ Weitere Playlist hinzufügen", light = true) { onAdd() }
         PillButton("Aktive Playlist neu laden", icon = AIcon.Refresh) { reload() }
     }
+    PlaylistStore.refreshError?.let { Text(Lang.tr("Aktualisierung fehlgeschlagen: {0}").replace("{0}", Lang.tr(it)), color = DS.Danger, fontSize = 15.sp, raw = true) }
+    // Stored list broken or incomplete (e.g. a cut-off download): forget everything stored and download it again
+    if (PlaylistStore.lists.isNotEmpty()) {
+        ConfirmPill("Playlist komplett neu laden") { scope.launch { PlaylistStore.reloadFromScratch(ctx) } }
+        Hint("Discards everything stored for the active playlist and downloads it again from the provider. Helps when categories or channels are missing. Name, backup servers and language selection are kept.")
+    }
     LanguageFilterSection(ctx)
     SectionTitle("Automatisch aktualisieren")
     val modes = listOf("Bei jedem Start", "Alle paar Stunden", "Täglich", "Wöchentlich", "Nur von Hand")

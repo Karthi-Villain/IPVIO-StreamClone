@@ -44,6 +44,9 @@ class XtreamApi(private val client: OkHttpClient, private val ua: String) {
         if (ok == false) throw PlaylistError("Zugang abgelehnt. Benutzername, Passwort oder Abo prüfen.")
     }
 
+    /** Names of the live categories (small request), to check a list from get.php for completeness. Empty on error. */
+    fun liveCategoryNames(a: XtreamLogic.Acct): Collection<String> = categories(a, "get_live_categories").values
+
     private fun categories(a: XtreamLogic.Acct, action: String): Map<String, String> {
         val out = HashMap<String, String>()
         val arr = runCatching { JSONArray(text(XtreamLogic.api(a, action))) }.getOrNull() ?: return out
